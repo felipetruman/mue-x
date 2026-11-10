@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   proof:
-    name: Isolated regression reproduction
+    name: Isolated regression reproduction and evolution trial
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -25,8 +25,14 @@ jobs:
           python-version: '3.11'
       - name: Compile Python sources
         run: python -m compileall -q mue
-      - name: Execute actual MUE-X regression reproductions
+      - name: Run standalone CLI status
+        run: |
+          python -m mue status > "$RUNNER_TEMP/mue-status.json"
+          python -c "import json,os; data=json.load(open(os.environ['RUNNER_TEMP']+'/mue-status.json')); print('CLI_STATUS_GENES:',data['genome']['gene_count'])"
+      - name: Run standalone evolve CLI
+        run: python -m mue evolve
+      - name: Execute fork regression tests and 10-cycle evolution trial
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           PYTHONUNBUFFERED: '1'
-        run: python -m unittest discover -s tests -p 'test_mue_fork_audit.py' -v
+        run: python -m unittest discover -s tests -p 'test_mue_*.py' -v
