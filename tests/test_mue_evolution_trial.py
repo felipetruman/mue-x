@@ -37,6 +37,52 @@ class MueEvolutionTrial(unittest.TestCase):
 
             base = {n: hashlib.sha256(g.source_path.read_bytes()).hexdigest()
                     for n, g in agent.genome.genes.items()}
+            def run_smoke_checks():
+                """Independent fixed-function checks; not part of the agent's fitness metric."""
+                checks = {}
+                def load(gene_name):
+                    gene = agent.genome.genes[gene_name]
+                    namespace = {"__name__": f"audit_{gene_name}"}
+                    exec(compile(gene.source_path.read_text("utf-8"),
+                                 str(gene.source_path), "exec"), namespace)
+                    return namespace
+                def attempt(name, fn):
+                    try:
+                        checks[name] = bool(fn())
+                    except Exception as error:
+                        checks[name] = False
+                        print(f"AUDIT_SMOKE_ERROR {name}: {type(error).__name__}: {error}")
+                reasoning = load("reasoning")
+                communication = load("communication")
+                planning = load("planning")
+                persistence = load("persistence")
+                attempt("strategy_failure", lambda: reasoning["select_strategy"](
+                    {"recent_failures": 5}) == "careful")
+                attempt("strategy_success", lambda: reasoning["select_strategy"](
+                    {"recent_successes": 7, "resources": 0.8}) == "bold")
+                attempt("evaluate_outcome", lambda: reasoning["evaluate_outcome"](
+                    "task", "success", 1.0)["score"] > 0.5)
+                attempt("format_response", lambda: communication["format_response"](
+                    "hello world")["metadata"]["tokens"] == 2)
+                attempt("sanitize_output", lambda: communication["sanitize_output"](
+                    " a ") == "a")
+                attempt("empty_summary", lambda: communication["generate_summary"](
+                    []) == "No events to report.")
+                def planning_case():
+                    planner = planning["TaskPlanner"]()
+                    planner.add_task("task", priority=0.9)
+                    return planner.next()["description"] == "task"
+                attempt("planning", planning_case)
+                def persistence_case():
+                    cache = persistence["StateCache"](cache_dir=str(
+                        Path(td) / "audit_cache"))
+                    cache.set("key", 27)
+                    return cache.get("key") == 27
+                attempt("persistence", persistence_case)
+                return checks
+
+            smoke_before = run_smoke_checks()
+            start_cycle = evo.cycle_count
             initial_fitness = agent.genome.stats["avg_fitness"]
             reports = []
             for index in range(10):
@@ -54,22 +100,28 @@ class MueEvolutionTrial(unittest.TestCase):
                     "duration_ms": round(result.get("cycle_time_ms", 0), 2),
                 })
 
+            smoke_after = run_smoke_checks()
             end = {n: hashlib.sha256(g.source_path.read_bytes()).hexdigest()
                    for n, g in agent.genome.genes.items()}
             changed = [n for n in base if n in end and base[n] != end[n]]
             print("AUDIT_EVOLUTION_TRIAL=" + json.dumps({
-                "actual_cycles": evo.cycle_count,
+                "cycles_executed": evo.cycle_count - start_cycle,
+                "prior_cycles": start_cycle,
                 "proposed": sum(r["proposed"] for r in reports),
                 "applied": sum(r["applied"] for r in reports),
                 "changed_gene_files": changed,
                 "initial_avg_fitness": initial_fitness,
                 "final_avg_fitness": agent.genome.stats["avg_fitness"],
-                "external_quality_benchmark": "not measured",
+                "smoke_before": smoke_before,
+                "smoke_after": smoke_after,
+                "smoke_passed_before": sum(smoke_before.values()),
+                "smoke_passed_after": sum(smoke_after.values()),
+                "external_quality_benchmark": "8 fixed-function smoke checks; not a performance benchmark",
                 "network_mining": "disabled",
                 "git_commit": "disabled",
                 "per_cycle": reports,
             }, sort_keys=True))
-            self.assertEqual(evo.cycle_count, 10)
+            self.assertEqual(evo.cycle_count - start_cycle, 10)
             self.assertEqual(len(reports), 10)
             self.assertGreater(sum(r["proposed"] for r in reports), 0)
 
