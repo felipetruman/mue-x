@@ -1,0 +1,32 @@
+name: MUE-X reproducible fork audit
+
+on:
+  push:
+    branches:
+      - audit/mue-proof-20261110
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    name: Isolated regression reproduction
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check out audit branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python sources
+        run: python -m compileall -q mue
+      - name: Execute actual MUE-X regression reproductions
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          PYTHONUNBUFFERED: '1'
+        run: python -m unittest discover -s tests -p 'test_mue_fork_audit.py' -v
